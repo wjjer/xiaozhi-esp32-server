@@ -56,7 +56,7 @@ public class OtaServiceImpl extends BaseServiceImpl<OtaDao, OtaEntity> implement
 
     @Override
     public void delete(String[] ids) {
-        baseDao.deleteBatchIds(Arrays.asList(ids));
+        baseDao.deleteByIds(Arrays.asList(ids));
     }
 
     @Override
@@ -81,12 +81,5 @@ public class OtaServiceImpl extends BaseServiceImpl<OtaDao, OtaEntity> implement
                 .orderByDesc("update_date")
                 .last("LIMIT 1");
         return baseDao.selectOne(wrapper);
-    }
-
-    @Override
-    public List<OtaEntity> listAll() {
-        QueryWrapper<OtaEntity> wrapper = new QueryWrapper<>();
-        wrapper.orderByDesc("update_date");
-        return baseDao.selectList(wrapper);
     }
 }

@@ -1,6 +1,5 @@
 package xiaozhi.modules.device.controller;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -9,13 +8,13 @@ import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -24,17 +23,17 @@ import xiaozhi.common.redis.RedisKeys;
 import xiaozhi.common.redis.RedisUtils;
 import xiaozhi.common.user.UserDetail;
 import xiaozhi.common.utils.Result;
+import xiaozhi.modules.device.dto.DeviceAddressBookAliasDTO;
+import xiaozhi.modules.device.dto.DeviceAddressBookPermissionDTO;
 import xiaozhi.modules.device.dto.DeviceManualAddDTO;
-import xiaozhi.modules.device.dto.DeviceOtaBindDTO;
 import xiaozhi.modules.device.dto.DeviceRegisterDTO;
 import xiaozhi.modules.device.dto.DeviceToolsCallReqDTO;
 import xiaozhi.modules.device.dto.DeviceUnBindDTO;
 import xiaozhi.modules.device.dto.DeviceUpdateDTO;
 import xiaozhi.modules.device.entity.DeviceEntity;
-import xiaozhi.modules.device.entity.OtaEntity;
+import xiaozhi.modules.device.service.DeviceAddressBookService;
 import xiaozhi.modules.device.service.DeviceService;
-import xiaozhi.modules.device.service.OtaService;
-import xiaozhi.modules.device.vo.DeviceOtaOptionVO;
+import xiaozhi.modules.device.vo.UserShowDeviceListVO;
 import xiaozhi.modules.security.user.SecurityUser;
 import xiaozhi.modules.sys.service.SysParamsService;
 
@@ -43,16 +42,16 @@ import xiaozhi.modules.sys.service.SysParamsService;
 @RequestMapping("/device")
 public class DeviceController {
     private final DeviceService deviceService;
+    private final DeviceAddressBookService deviceAddressBookService;
     private final RedisUtils redisUtils;
     private final SysParamsService sysParamsService;
-    private final OtaService otaService;
 
-    public DeviceController(DeviceService deviceService, RedisUtils redisUtils,
-            SysParamsService sysParamsService, OtaService otaService) {
+    public DeviceController(DeviceService deviceService, DeviceAddressBookService deviceAddressBookService,
+            RedisUtils redisUtils, SysParamsService sysParamsService) {
         this.deviceService = deviceService;
+        this.deviceAddressBookService = deviceAddressBookService;
         this.redisUtils = redisUtils;
         this.sysParamsService = sysParamsService;
-        this.otaService = otaService;
     }
 
     @PostMapping("/bind/{agentId}/{deviceCode}")
@@ -87,10 +86,10 @@ public class DeviceController {
     @GetMapping("/bind/{agentId}")
     @Operation(summary = "获取已绑定设备")
     @RequiresPermissions("sys:role:normal")
-    public Result<List<DeviceEntity>> getUserDevices(@PathVariable String agentId) {
+    public Result<List<UserShowDeviceListVO>> getUserDevices(@PathVariable String agentId) {
         UserDetail user = SecurityUser.getUser();
-        List<DeviceEntity> devices = deviceService.getUserDevices(user.getId(), agentId);
-        return new Result<List<DeviceEntity>>().ok(devices);
+        List<UserShowDeviceListVO> devices = deviceService.getUserDeviceList(user.getId(), agentId);
+        return new Result<List<UserShowDeviceListVO>>().ok(devices);
     }
 
     @PostMapping("/bind/{agentId}")
@@ -126,7 +125,9 @@ public class DeviceController {
             return new Result<Void>().error("设备不存在");
         }
         BeanUtils.copyProperties(deviceUpdateDTO, entity);
-        deviceService.updateById(entity);
+        if (!deviceService.updateById(entity)) {
+            return new Result<Void>().error(ErrorCode.UPDATE_DATA_FAILED);
+        }
         return new Result<Void>();
     }
 
@@ -169,46 +170,46 @@ public class DeviceController {
         return response.ok(result);
     }
 
-    @GetMapping("/ota/options")
-    @Operation(summary = "获取可绑定的固件列表")
+    @GetMapping("/address-book/{macAddress}")
+    @Operation(summary = "获取设备通讯录")
     @RequiresPermissions("sys:role:normal")
-    public Result<List<DeviceOtaOptionVO>> getDeviceOtaOptions() {
-        List<OtaEntity> all = otaService.listAll();
-        List<DeviceOtaOptionVO> options = new ArrayList<>(all.size());
-        for (OtaEntity o : all) {
-            DeviceOtaOptionVO vo = new DeviceOtaOptionVO();
-            vo.setId(o.getId());
-            vo.setFirmwareName(o.getFirmwareName());
-            vo.setType(o.getType());
-            vo.setVersion(o.getVersion());
-            options.add(vo);
+    public Result<Object> getAddressBook(@PathVariable String macAddress) {
+        if (deviceService.getOwnedDeviceByMacAddress(macAddress) == null) {
+            return new Result<Object>().error(ErrorCode.DEVICE_NOT_EXIST);
         }
-        return new Result<List<DeviceOtaOptionVO>>().ok(options);
+        return new Result<Object>().ok(deviceAddressBookService.getAddressBookList(macAddress));
     }
 
-    @PutMapping("/ota/{id}")
-    @Operation(summary = "设置设备定向固件(传空则恢复按型号自动升级)")
+    @GetMapping("/address-book/call")
+    @Operation(summary = "根据昵称发起呼叫")
+    public Result<Map<String, Object>> callByNickname(String callerMac, String nickname,
+            @RequestParam(required = false, defaultValue = "false") boolean answer) {
+        Map<String, Object> result = deviceAddressBookService.callByNickname(callerMac, nickname, answer);
+        if (result == null) {
+            return new Result<Map<String, Object>>().error("未找到对应设备");
+        }
+        return new Result<Map<String, Object>>().ok(result);
+    }
+
+    @PutMapping("/address-book/alias")
+    @Operation(summary = "更新设备通讯录别名")
     @RequiresPermissions("sys:role:normal")
-    public Result<Void> bindDeviceOta(@PathVariable String id, @RequestBody DeviceOtaBindDTO dto) {
-        DeviceEntity entity = deviceService.selectById(id);
-        UserDetail user = SecurityUser.getUser();
-        if (entity == null || !user.getId().equals(entity.getUserId())) {
-            return new Result<Void>().error("设备不存在");
+    public Result<Void> updateAlias(@Valid @RequestBody DeviceAddressBookAliasDTO dto) {
+        if (deviceService.getOwnedDeviceByMacAddress(dto.getMacAddress()) == null) {
+            return new Result<Void>().error("无权限操作该设备");
         }
+        deviceAddressBookService.saveOrUpdate(dto.getMacAddress(), dto.getTargetMac(), dto.getAlias(), null);
+        return new Result<Void>();
+    }
 
-        String otaId = dto == null ? null : dto.getOtaId();
-        if (StringUtils.isNotBlank(otaId) && otaService.selectById(otaId) == null) {
-            return new Result<Void>().error("固件不存在");
+    @PutMapping("/address-book/permission")
+    @Operation(summary = "更新设备通讯录权限")
+    @RequiresPermissions("sys:role:normal")
+    public Result<Void> updatePermission(@Valid @RequestBody DeviceAddressBookPermissionDTO dto) {
+        if (deviceService.getOwnedDeviceByMacAddress(dto.getMacAddress()) == null) {
+            return new Result<Void>().error("无权限操作该设备");
         }
-
-        if (StringUtils.isBlank(otaId)) {
-            deviceService.update(null, new UpdateWrapper<DeviceEntity>()
-                    .eq("id", id)
-                    .setSql("ota_id = NULL"));
-        } else {
-            entity.setOtaId(otaId);
-            deviceService.updateById(entity);
-        }
-        return new Result<>();
+        deviceAddressBookService.saveOrUpdate(dto.getMacAddress(), dto.getTargetMac(), null, dto.getHasPermission());
+        return new Result<Void>();
     }
 }

@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import random
 import difflib
@@ -9,6 +10,7 @@ from core.handle.migu_music_handler import should_use_migu, handle_migu_music
 from plugins_func.register import register_function, ToolType, ActionResponse, Action
 from core.utils.dialogue import Message
 from core.providers.tts.dto.dto import TTSMessageDTO, SentenceType, ContentType
+from plugins_func.register import register_function, ToolType, ActionResponse, Action
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -47,8 +49,11 @@ play_music_function_desc = {
 
 
 @register_function("play_music", play_music_function_desc, ToolType.SYSTEM_CTL)
-def play_music(conn: "ConnectionHandler", song_name: str, singer: str = None):
+async def play_music(conn: "ConnectionHandler", song_name: str, singer: str = None):
     try:
+        music_intent = (
+                f"播放音乐 {song_name}" if song_name != "random" else "随机播放音乐"
+         )
         # 检查事件循环状态
         if not conn.loop.is_running():
             conn.logger.bind(tag=TAG).error("事件循环未运行，无法提交任务")
@@ -58,7 +63,7 @@ def play_music(conn: "ConnectionHandler", song_name: str, singer: str = None):
 
         # 提交异步任务
         task = conn.loop.create_task(
-            handle_music_command(conn, song_name, singer)  # 封装异步逻辑
+            handle_music_command(conn, music_intent, singer)  # 封装异步逻辑
         )
 
         # 非阻塞回调处理
@@ -79,6 +84,16 @@ def play_music(conn: "ConnectionHandler", song_name: str, singer: str = None):
         return ActionResponse(
             action=Action.RESPONSE, result=str(e), response="播放音乐时出错了"
         )
+
+
+def _extract_song_name(text):
+    """从用户输入中提取歌名"""
+    for keyword in ["播放音乐"]:
+        if keyword in text:
+            parts = text.split(keyword)
+            if len(parts) > 1:
+                return parts[1].strip()
+    return None
 
 
 def _find_best_match(potential_song, music_files):
