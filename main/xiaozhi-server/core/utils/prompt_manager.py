@@ -140,74 +140,22 @@ class PromptManager:
         return today_date, today_weekday, lunar_date
 
     def _get_location_info(self, client_ip: str) -> str:
-        """获取位置信息"""
-        try:
-            # 先从缓存获取
-            cached_location = self.cache_manager.get(self.CacheType.LOCATION, client_ip)
-            if cached_location is not None:
-                return cached_location
+        """已停用：定向流量卡的出口 IP 归属运营商节点，不代表用户实际所在地。
 
-            # 缓存未命中，调用API获取
-            from core.utils.util import get_ip_info
-
-            ip_info = get_ip_info(client_ip, self.logger)
-            city = ip_info.get("city", "未知位置")
-            location = f"{city}"
-
-            # 存入缓存
-            self.cache_manager.set(self.CacheType.LOCATION, client_ip, location)
-            return location
-        except Exception as e:
-            self.logger.bind(tag=TAG).error(f"获取位置信息失败: {e}")
-            return "未知位置"
+        保留方法只为兼容旧模板，一律返回空串，避免把错误城市注入系统提示词。
+        所在地改由对话中向用户确认，再交给 get_weather 按城市查询。
+        """
+        return ""
 
     def _get_weather_info(self, conn: "ConnectionHandler", location: str) -> str:
-        """获取天气信息"""
-        try:
-            # 先从缓存获取
-            cached_weather = self.cache_manager.get(self.CacheType.WEATHER, location)
-            if cached_weather is not None:
-                return cached_weather
-
-            # 缓存未命中，调用get_weather函数获取
-            from plugins_func.functions.get_weather import get_weather
-            from plugins_func.register import ActionResponse
-
-            # 调用get_weather函数
-            result = get_weather(conn, location=location, lang="zh_CN")
-            if isinstance(result, ActionResponse):
-                weather_report = result.result
-                self.cache_manager.set(self.CacheType.WEATHER, location, weather_report)
-                return weather_report
-            return "天气信息获取失败"
-
-        except Exception as e:
-            self.logger.bind(tag=TAG).error(f"获取天气信息失败: {e}")
-            return "天气信息获取失败"
+        """已停用：连接建立时不再预取天气，改由用户确认城市后实时查询。"""
+        return ""
 
     def update_context_info(self, conn, client_ip: str):
         """同步更新上下文信息"""
         try:
-            local_address = ""
-            if (
-                client_ip
-                and self.base_prompt_template
-                and (
-                    "local_address" in self.base_prompt_template
-                    or "weather_info" in self.base_prompt_template
-                )
-            ):
-                # 获取位置信息（使用全局缓存）
-                local_address = self._get_location_info(client_ip)
-                self.logger.bind(tag=TAG).info(f"终端当前IP地址：{client_ip}，定位位置为：{local_address}")
-
-            if (
-                self.base_prompt_template
-                and "weather_info" in self.base_prompt_template
-                and local_address
-            ):
-                # 获取天气信息（使用全局缓存）
-                self._get_weather_info(conn, local_address)
+            # 不再按 client_ip 推断所在地，也不再预取天气。
+            # 下方 context_provider 逻辑保持不变。
 
             # 获取配置的上下文数据
             if hasattr(conn, "device_id") and conn.device_id:
@@ -235,22 +183,10 @@ class PromptManager:
             # 获取最新的时间信息（不缓存）
             today_date, today_weekday, lunar_date = self._get_current_time_info()
 
-            # 获取缓存的上下文信息
-            local_address = ""
+            # 不再注入 IP 推断的所在地与预取天气。
+            # 保留这两个变量以兼容自定义模板：显示「未知」也比显示错误城市安全。
+            local_address = "未知"
             weather_info = ""
-
-            if client_ip:
-                # 获取位置信息（从全局缓存）
-                local_address = (
-                    self.cache_manager.get(self.CacheType.LOCATION, client_ip) or ""
-                )
-
-                # 获取天气信息（从全局缓存）
-                if local_address:
-                    weather_info = (
-                        self.cache_manager.get(self.CacheType.WEATHER, local_address)
-                        or ""
-                    )
 
             # 获取TTS选择的语言，默认值为中文
             language = (
